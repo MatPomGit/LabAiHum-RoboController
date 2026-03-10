@@ -1,12 +1,13 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { OrbitControls, Grid, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { Settings2, User, Grid3X3, Layers } from 'lucide-react';
+import { Settings2, User, Grid3X3, Layers, Navigation } from 'lucide-react';
 
 interface LidarMapProps {
   points: number[][]; // [x, y] or [x, y, z]
   robotPose?: { x: number, y: number, yaw: number };
+  trajectory?: { x: number, y: number }[];
 }
 
 const AnimatedRobot = ({ pose, visible }: { pose: { x: number, y: number, yaw: number }, visible: boolean }) => {
@@ -143,8 +144,27 @@ const AnimatedLidarPoints = ({ geometry, pointSize }: { geometry: THREE.BufferGe
   );
 };
 
-export const LidarMap = ({ points, robotPose = { x: 0, y: 0, yaw: 0 } }: LidarMapProps) => {
+const TrajectoryLine = ({ points, visible }: { points: { x: number, y: number }[], visible: boolean }) => {
+  const pathPoints = useMemo(() => {
+    return points.map(p => new THREE.Vector3(p.x, 0.01, p.y));
+  }, [points]);
+
+  if (!visible || pathPoints.length < 2) return null;
+
+  return (
+    <Line
+      points={pathPoints}
+      color="#ef4444"
+      lineWidth={2}
+      transparent
+      opacity={0.6}
+    />
+  );
+};
+
+export const LidarMap = ({ points, robotPose = { x: 0, y: 0, yaw: 0 }, trajectory = [] }: LidarMapProps) => {
   const [showRobot, setShowRobot] = useState(true);
+  const [showTrajectory, setShowTrajectory] = useState(true);
   const [showFineGrid, setShowFineGrid] = useState(true);
   const [showSectionGrid, setShowSectionGrid] = useState(true);
   const [showAxes, setShowAxes] = useState(true);
@@ -182,6 +202,9 @@ export const LidarMap = ({ points, robotPose = { x: 0, y: 0, yaw: 0 } }: LidarMa
 
         {/* Robot Indicator */}
         <AnimatedRobot pose={robotPose} visible={showRobot} />
+
+        {/* Trajectory Line */}
+        <TrajectoryLine points={trajectory} visible={showTrajectory} />
 
         {/* Enhanced Floor Grid */}
         <group position={[0, -0.01, 0]}>
@@ -285,6 +308,17 @@ export const LidarMap = ({ points, robotPose = { x: 0, y: 0, yaw: 0 } }: LidarMa
                 <span>Robot Indicator</span>
               </div>
               <div className={`w-1.5 h-1.5 rounded-full ${showRobot ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-neutral-700'}`} />
+            </button>
+
+            <button 
+              onClick={() => setShowTrajectory(!showTrajectory)}
+              className={`flex items-center justify-between px-3 py-2 rounded-lg transition-all text-[10px] font-medium ${showTrajectory ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'text-neutral-500 hover:bg-white/5 border border-transparent'}`}
+            >
+              <div className="flex items-center gap-3">
+                <Navigation className="w-3.5 h-3.5" />
+                <span>Trajectory Path</span>
+              </div>
+              <div className={`w-1.5 h-1.5 rounded-full ${showTrajectory ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-neutral-700'}`} />
             </button>
 
             <button 

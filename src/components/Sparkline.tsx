@@ -28,7 +28,38 @@ export const Sparkline = ({ data, width = 60, height = 20, color = '#10b981' }: 
     const line = d3.line<number>()
       .x((_, i) => x(i))
       .y(d => y(d))
-      .curve(d3.curveBasis);
+      .curve(d3.curveMonotoneX);
+
+    const area = d3.area<number>()
+      .x((_, i) => x(i))
+      .y0(height)
+      .y1(d => y(d))
+      .curve(d3.curveMonotoneX);
+
+    // Add gradient
+    const gradientId = `sparkline-gradient-${Math.random().toString(36).substring(2, 9)}`;
+    const defs = svg.append('defs');
+    const gradient = defs.append('linearGradient')
+      .attr('id', gradientId)
+      .attr('x1', '0%')
+      .attr('y1', '0%')
+      .attr('x2', '0%')
+      .attr('y2', '100%');
+
+    gradient.append('stop')
+      .attr('offset', '0%')
+      .attr('stop-color', color)
+      .attr('stop-opacity', 0.4);
+
+    gradient.append('stop')
+      .attr('offset', '100%')
+      .attr('stop-color', color)
+      .attr('stop-opacity', 0);
+
+    svg.append('path')
+      .datum(data)
+      .attr('fill', `url(#${gradientId})`)
+      .attr('d', area);
 
     svg.append('path')
       .datum(data)

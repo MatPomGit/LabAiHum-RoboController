@@ -4,8 +4,8 @@ import {
   Gamepad2, Cpu, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, 
   RotateCcw, RotateCw, AlertTriangle, ShieldAlert, Link, Link2Off,
   Circle, Square, Play, Info, LayoutDashboard, Octagon, Database,
-  ListChecks, Footprints, Camera, Layout, Maximize2, Monitor, Save, Trash2, ChevronRight,
-  Target, Navigation, Share2, Box
+  ListChecks, Footprints, Camera, Layout, Maximize2, Monitor, Save, Trash2, ChevronRight, ChevronUp, ChevronDown,
+  Target, Navigation, Share2, Box, Copy, Check
 } from 'lucide-react';
 import * as ROSLIB from 'roslib';
 import { Robot3D } from './components/Robot3D';
@@ -29,6 +29,7 @@ export default function App() {
   
   const [customTopics, setCustomTopics] = useState<{name: string, type: string}[]>([]);
   const [customTopicData, setCustomTopicData] = useState<Record<string, any>>({});
+  const [copyStatus, setCopyStatus] = useState<Record<string, boolean>>({});
   const [customTopicName, setCustomTopicName] = useState('');
   const [customTopicType, setCustomTopicType] = useState('');
   const [discoveredTopics, setDiscoveredTopics] = useState<{name: string, type: string}[]>([]);
@@ -51,6 +52,8 @@ export default function App() {
   const [cameraMode, setCameraMode] = useState<'rgb' | 'depth'>('rgb');
   const [lidarPoints, setLidarPoints] = useState<number[][]>([]);
   const [robotPose, setRobotPose] = useState({ x: 0, y: 0, yaw: 0 });
+  const [trajectory, setTrajectory] = useState<{ x: number, y: number }[]>([]);
+  const [notifications, setNotifications] = useState<{ id: string, type: 'info' | 'warning' | 'error', message: string, timestamp: Date }[]>([]);
   
   const [battery, setBattery] = useState(87);
   const [isRecordingImage, setIsRecordingImage] = useState(false);
@@ -88,6 +91,16 @@ export default function App() {
     });
   }, []);
 
+  const addNotification = useCallback((type: 'info' | 'warning' | 'error', message: string) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setNotifications(prev => [{ id, type, message, timestamp: new Date() }, ...prev].slice(0, 5));
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  }, []);
+
   const connectROS = (confirmed = false) => {
     if (!confirmed) {
       setRosConfirmAction(rosStatus === 'connected' ? 'disconnect' : 'connect');
@@ -120,7 +133,11 @@ export default function App() {
       });
       batterySub.subscribe((msg: any) => {
         if (msg.percentage !== undefined) {
-          setBattery(Math.round(msg.percentage * 100));
+          const level = Math.round(msg.percentage * 100);
+          setBattery(level);
+          if (level < 20) {
+            addNotification('warning', `Low Battery: ${level}%`);
+          }
         }
       });
 
@@ -216,6 +233,14 @@ export default function App() {
           // Simple yaw from quaternion
           const yaw = 2 * Math.atan2(ori.z, ori.w);
           setRobotPose({ x: pos.x, y: pos.y, yaw });
+          
+          setTrajectory(prev => {
+            const last = prev[prev.length - 1];
+            if (!last || Math.sqrt((last.x - pos.x)**2 + (last.y - pos.y)**2) > 0.1) {
+              return [...prev, { x: pos.x, y: pos.y }].slice(-200);
+            }
+            return prev;
+          });
         }
       });
     });
@@ -224,12 +249,14 @@ export default function App() {
       setRosStatus('error');
       setRosErrorMsg('Connection refused or network error.');
       addLog(`ROS2 Connection Error.`);
+      addNotification('error', 'ROS2 Connection Error');
     });
 
     rosInstance.on('close', () => {
       setRosStatus('disconnected');
       setRosErrorMsg('Connection closed.');
       addLog('ROS2 Connection closed.');
+      addNotification('info', 'ROS2 Connection Closed');
     });
 
     setRos(rosInstance);
@@ -251,7 +278,7 @@ export default function App() {
 
   const addTask = (type: 'move_arm' | 'grasp' | 'move_to', params: any) => {
     const newTask = {
-      id: Math.random().toString(36).substr(2, 9),
+      id: Math.random().toString(36).substring(2, 9),
       type,
       params
     };
@@ -261,6 +288,25 @@ export default function App() {
 
   const removeTask = (id: string) => {
     setTasks(prev => prev.filter(t => t.id !== id));
+  };
+
+  const moveTaskUp = (index: number) => {
+    if (index === 0) return;
+    setTasks(prev => {
+      if (index <= 0 || index >= prev.length) return prev;
+      const newTasks = [...prev];
+      [newTasks[index - 1], newTasks[index]] = [newTasks[index], newTasks[index - 1]];
+      return newTasks;
+    });
+  };
+
+  const moveTaskDown = (index: number) => {
+    setTasks(prev => {
+      if (index < 0 || index >= prev.length - 1) return prev;
+      const newTasks = [...prev];
+      [newTasks[index + 1], newTasks[index]] = [newTasks[index], newTasks[index + 1]];
+      return newTasks;
+    });
   };
 
   const executeTasks = async () => {
@@ -427,6 +473,7 @@ export default function App() {
     setMode(newMode);
     setPendingMode(null);
     addLog(`Mode changed to: ${newMode}`);
+    addNotification('info', `Mode: ${newMode}`);
     
     // If switching away from manual control, stop movement
     if (mode === 'Manual Control' && newMode !== 'Manual Control') {
@@ -436,6 +483,15 @@ export default function App() {
 
   const cancelModeChange = () => {
     setPendingMode(null);
+  };
+
+  const copyToClipboard = (text: string, topicName: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopyStatus(prev => ({ ...prev, [topicName]: true }));
+      setTimeout(() => {
+        setCopyStatus(prev => ({ ...prev, [topicName]: false }));
+      }, 2000);
+    });
   };
 
   const handleMove = (lx: number, ly: number, az: number) => {
@@ -461,6 +517,20 @@ export default function App() {
   };
 
   const stopMove = () => handleMove(0, 0, 0);
+
+  const handleArmMove = (arm: 'left' | 'right', joint: string, direction: number) => {
+    if (!ros || rosStatus !== 'connected') return;
+    
+    const armCmd = new ROSLIB.Topic({
+      ros: ros,
+      name: `/arm/${arm}/joint_cmd`,
+      messageType: 'std_msgs/Float64'
+    });
+    
+    // In a real scenario, we'd send a specific joint index and value
+    armCmd.publish({ data: direction * 0.1 } as any);
+    addLog(`Published ${arm} arm command: ${joint} ${direction > 0 ? '+' : '-'}`);
+  };
 
   const emergencyStop = () => {
     stopMove();
@@ -529,8 +599,101 @@ export default function App() {
     return () => clearInterval(interval);
   }, [rosbagStatus]);
 
+  // Keyboard Teleoperation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
+      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (activeTab !== 'dashboard') return;
+      
+      switch(e.key.toLowerCase()) {
+        case 'arrowup':
+        case 'w':
+          handleMove(0.5, 0, 0);
+          break;
+        case 'arrowdown':
+        case 's':
+          handleMove(-0.5, 0, 0);
+          break;
+        case 'arrowleft':
+        case 'a':
+          handleMove(0, 0.5, 0);
+          break;
+        case 'arrowright':
+        case 'd':
+          handleMove(0, -0.5, 0);
+          break;
+        case 'q':
+          handleMove(0, 0, 0.5);
+          break;
+        case 'e':
+          handleMove(0, 0, -0.5);
+          break;
+        // Arm Controls
+        case 'i':
+          handleArmMove('left', 'pitch', 1);
+          break;
+        case 'k':
+          handleArmMove('left', 'pitch', -1);
+          break;
+        case 'j':
+          handleArmMove('left', 'roll', 1);
+          break;
+        case 'l':
+          handleArmMove('left', 'roll', -1);
+          break;
+        case 'u':
+          handleArmMove('right', 'pitch', 1);
+          break;
+        case 'o':
+          handleArmMove('right', 'pitch', -1);
+          break;
+        case ' ':
+          emergencyStop();
+          break;
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', 'q', 'e'].includes(e.key.toLowerCase())) {
+        stopMove();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [activeTab, ros, rosStatus, mode]);
+
   return (
     <div className="min-h-screen bg-[#050505] text-neutral-300 font-sans flex flex-col selection:bg-emerald-500/30">
+      {/* Notifications Overlay */}
+      <div className="fixed top-20 right-6 z-[100] flex flex-col gap-3 pointer-events-none">
+        {notifications.map(n => (
+          <div 
+            key={n.id} 
+            className={`
+              pointer-events-auto min-w-[280px] p-4 rounded-xl border backdrop-blur-xl shadow-2xl animate-in slide-in-from-right-10 duration-300
+              ${n.type === 'error' ? 'bg-red-500/10 border-red-500/30 text-red-400' : 
+                n.type === 'warning' ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-400' : 
+                'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}
+            `}
+          >
+            <div className="flex items-center gap-3">
+              {n.type === 'error' ? <ShieldAlert className="w-5 h-5" /> : 
+               n.type === 'warning' ? <AlertTriangle className="w-5 h-5" /> : 
+               <Info className="w-5 h-5" />}
+              <div className="flex flex-col">
+                <span className="text-[11px] font-bold uppercase tracking-widest opacity-50">{n.type}</span>
+                <span className="text-sm font-medium">{n.message}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
       {/* Header */}
       <header className="h-16 border-b border-neutral-800/60 bg-[#0a0a0a] flex items-center justify-between px-6 shrink-0">
         <div className="flex items-center gap-4">
@@ -808,24 +971,36 @@ export default function App() {
                             <span className="text-emerald-400 font-mono text-xs font-bold truncate">{t.name}</span>
                             <span className="text-neutral-500 font-mono text-[9px] bg-neutral-900 px-2 py-0.5 rounded border border-neutral-800 truncate">{t.type}</span>
                           </div>
-                          <button 
-                            onClick={() => {
-                              setCustomTopics(prev => prev.filter(x => x.name !== t.name));
-                              setCustomTopicData(prev => {
-                                const next = { ...prev };
-                                delete next[t.name];
-                                return next;
-                              });
-                            }}
-                            className="text-red-400 hover:text-red-300 text-[9px] font-bold tracking-wider uppercase bg-red-500/10 px-2 py-1 rounded border border-red-500/20 hover:bg-red-500/20 transition-colors shrink-0 ml-2"
-                          >
-                            Remove
-                          </button>
+                          <div className="flex items-center gap-2 shrink-0 ml-2">
+                            <button 
+                              onClick={() => copyToClipboard(JSON.stringify(customTopicData[t.name], null, 2), t.name)}
+                              disabled={!customTopicData[t.name]}
+                              className={`p-1.5 rounded border transition-all ${
+                                copyStatus[t.name] 
+                                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' 
+                                  : 'bg-neutral-800 border-neutral-700 text-neutral-500 hover:text-neutral-300 disabled:opacity-30'
+                              }`}
+                              title="Copy Data"
+                            >
+                              {copyStatus[t.name] ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setCustomTopics(prev => prev.filter(x => x.name !== t.name));
+                                setCustomTopicData(prev => {
+                                  const next = { ...prev };
+                                  delete next[t.name];
+                                  return next;
+                                });
+                              }}
+                              className="text-red-400 hover:text-red-300 text-[9px] font-bold tracking-wider uppercase bg-red-500/10 px-2 py-1 rounded border border-red-500/20 hover:bg-red-500/20 transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
-                        <div className="p-3 overflow-x-auto max-h-48 overflow-y-auto bg-black/20">
-                          <pre className="text-[10px] font-mono text-neutral-400 m-0 leading-relaxed">
-                            {customTopicData[t.name] ? JSON.stringify(customTopicData[t.name], null, 2) : 'Waiting for messages...'}
-                          </pre>
+                        <div className="p-3 overflow-x-auto max-h-64 overflow-y-auto bg-black/20 custom-scrollbar">
+                          <JsonView data={customTopicData[t.name]} />
                         </div>
                       </div>
                     ))
@@ -1179,8 +1354,68 @@ export default function App() {
         ) : (
           <div className="grid grid-cols-12 gap-6 h-full">
             {/* Left Column - Camera & Vision */}
-        <div className={`col-span-12 flex flex-col gap-6 h-full ${layout === 'manual' ? 'lg:col-span-8' : layout === 'autonomous' ? 'lg:col-span-7' : 'lg:col-span-4'}`}>
-          <div className={`bg-[#0a0a0a] border border-neutral-800/60 rounded-xl overflow-hidden flex flex-col shadow-lg ${viewMode === 'camera' ? '' : (layout === 'manual' ? 'h-[75%]' : 'h-[60%]')}`}>
+            <div className={`col-span-12 flex flex-col gap-4 h-full ${layout === 'manual' ? 'lg:col-span-8' : layout === 'autonomous' ? 'lg:col-span-7' : 'lg:col-span-4'}`}>
+              {/* Status Summary Card */}
+              <div className="grid grid-cols-4 gap-4 shrink-0">
+                <div className="bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3 flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest">Battery Level</span>
+                  <div className="flex items-center gap-2">
+                    <Battery className={`w-4 h-4 ${battery < 20 ? 'text-red-400' : 'text-emerald-400'}`} />
+                    <span className={`text-lg font-bold font-mono ${battery < 20 ? 'text-red-400' : 'text-neutral-200'}`}>{battery}%</span>
+                  </div>
+                </div>
+                <div className="bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3 flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest">Operation Mode</span>
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-blue-400" />
+                    <span className="text-sm font-bold text-neutral-200 truncate">{mode}</span>
+                  </div>
+                </div>
+                <div className="bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3 flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest">Joint Status</span>
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-purple-400" />
+                    <span className="text-sm font-bold text-neutral-200">
+                      {Object.values(joints).filter(j => j.status !== 'normal').length > 0 ? 'Warning' : 'Nominal'}
+                    </span>
+                  </div>
+                </div>
+                <div className="bg-neutral-900/40 border border-neutral-800/60 rounded-xl p-3 flex flex-col gap-1">
+                  <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-widest">Control Status</span>
+                  <div className="flex items-center gap-2">
+                    <Gamepad2 className="w-4 h-4 text-yellow-400" />
+                    <span className="text-sm font-bold text-neutral-200">Keyboard Active</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Teleoperation Guide */}
+              <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-3 shrink-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <Info className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Teleoperation Guide</span>
+                </div>
+                <div className="grid grid-cols-3 gap-4 text-[9px] font-mono">
+                  <div className="space-y-1">
+                    <div className="text-neutral-500 uppercase font-bold mb-1">Base Movement</div>
+                    <div className="flex justify-between"><span className="text-neutral-300">W / S</span> <span className="text-emerald-500">Forward / Back</span></div>
+                    <div className="flex justify-between"><span className="text-neutral-300">A / D</span> <span className="text-emerald-500">Left / Right</span></div>
+                    <div className="flex justify-between"><span className="text-neutral-300">Q / E</span> <span className="text-emerald-500">Rotate L / R</span></div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-neutral-500 uppercase font-bold mb-1">Left Arm</div>
+                    <div className="flex justify-between"><span className="text-neutral-300">I / K</span> <span className="text-blue-500">Pitch Up / Down</span></div>
+                    <div className="flex justify-between"><span className="text-neutral-300">J / L</span> <span className="text-blue-500">Roll L / R</span></div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-neutral-500 uppercase font-bold mb-1">Right Arm</div>
+                    <div className="flex justify-between"><span className="text-neutral-300">U / O</span> <span className="text-purple-500">Pitch Up / Down</span></div>
+                    <div className="flex justify-between"><span className="text-neutral-300">Space</span> <span className="text-red-500 font-bold">EMERGENCY STOP</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 bg-neutral-900/40 border border-neutral-800/60 rounded-xl overflow-hidden relative group">
             <div className="px-4 py-3 border-b border-neutral-800/60 flex justify-between items-center bg-neutral-900/30">
               <div className="flex items-center gap-4 text-neutral-300">
                 <div className="flex items-center gap-2">
@@ -1231,9 +1466,36 @@ export default function App() {
                   {/* HUD Overlay */}
                   <div className="absolute inset-0 pointer-events-none p-6 flex flex-col justify-between">
                     <div className="flex justify-between items-start">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                        <span className="text-red-400 text-xs font-mono tracking-wider">REC</span>
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-center gap-2 bg-black/40 backdrop-blur-sm px-2 py-1 rounded border border-white/5">
+                          <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                          <span className="text-red-400 text-[10px] font-mono tracking-wider">REC</span>
+                        </div>
+                        
+                        <div className="flex flex-col gap-2 bg-black/40 backdrop-blur-md p-3 rounded-xl border border-white/10 shadow-2xl">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-4 bg-neutral-800 rounded-sm relative overflow-hidden border border-neutral-700">
+                              <div 
+                                className={`h-full transition-all duration-500 ${battery < 20 ? 'bg-red-500' : 'bg-emerald-500'}`}
+                                style={{ width: `${battery}%` }}
+                              ></div>
+                            </div>
+                            <span className="text-[11px] font-mono font-bold text-neutral-200">{battery}%</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                            <div className="relative">
+                              <div className={`w-2 h-2 rounded-full ${rosStatus === 'connected' ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                              {rosStatus === 'connected' && <div className="absolute inset-0 w-2 h-2 rounded-full bg-emerald-500 animate-ping opacity-75"></div>}
+                            </div>
+                            <span className="text-[10px] font-mono text-neutral-300 uppercase tracking-tight">ROS: {rosStatus}</span>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <Cpu className="w-3.5 h-3.5 text-blue-400" />
+                            <span className="text-[10px] font-mono text-neutral-300 uppercase tracking-tight">{mode}</span>
+                          </div>
+                        </div>
                       </div>
                     <div className="flex gap-2 pointer-events-auto">
                         <button 
@@ -1296,7 +1558,7 @@ export default function App() {
               ) : viewMode === '3d' ? (
                 <Robot3D joints={joints} />
               ) : (
-                <LidarMap points={lidarPoints} robotPose={robotPose} />
+                <LidarMap points={lidarPoints} robotPose={robotPose} trajectory={trajectory} />
               )}
             </div>
           </div>
@@ -1376,10 +1638,29 @@ export default function App() {
                         </div>
                         <div className="flex items-center gap-2">
                           {currentTaskIndex === idx && <Activity className="w-3 h-3 text-emerald-400 animate-pulse" />}
+                          <div className="flex items-center bg-black/20 rounded border border-neutral-800">
+                            <button 
+                              onClick={() => moveTaskUp(idx)}
+                              disabled={isTaskExecuting || idx === 0}
+                              className="p-1 text-neutral-600 hover:text-neutral-300 disabled:opacity-30"
+                              title="Move Up"
+                            >
+                              <ChevronUp className="w-3 h-3" />
+                            </button>
+                            <button 
+                              onClick={() => moveTaskDown(idx)}
+                              disabled={isTaskExecuting || idx === tasks.length - 1}
+                              className="p-1 text-neutral-600 hover:text-neutral-300 disabled:opacity-30 border-l border-neutral-800"
+                              title="Move Down"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </button>
+                          </div>
                           <button 
                             onClick={() => removeTask(task.id)}
                             disabled={isTaskExecuting}
-                            className="text-neutral-600 hover:text-red-400"
+                            className="p-1 text-neutral-600 hover:text-red-400 transition-colors"
+                            title="Remove Task"
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
@@ -1823,6 +2104,45 @@ export default function App() {
 );
 }
 
+function JsonView({ data }: { data: any }) {
+  if (!data) return <span className="text-neutral-600 text-[10px] font-mono italic">Waiting for messages...</span>;
+
+  const json = JSON.stringify(data, null, 2);
+  
+  // Simple syntax highlighting using regex
+  // We escape HTML characters first to prevent XSS and ensure correct rendering
+  const escaped = json
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  const highlighted = escaped.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    (match) => {
+      let cls = 'text-blue-400'; // number
+      if (/^"/.test(match)) {
+        if (/:$/.test(match)) {
+          cls = 'text-emerald-400'; // key
+        } else {
+          cls = 'text-yellow-400'; // string
+        }
+      } else if (/true|false/.test(match)) {
+        cls = 'text-purple-400'; // boolean
+      } else if (/null/.test(match)) {
+        cls = 'text-red-400'; // null
+      }
+      return `<span class="${cls}">${match}</span>`;
+    }
+  );
+
+  return (
+    <pre 
+      className="text-[10px] font-mono m-0 leading-relaxed"
+      dangerouslySetInnerHTML={{ __html: highlighted }}
+    />
+  );
+}
+
 function TelemetryRow({ label, value, torque, temp, status = 'normal', posHistory = [], torqueHistory = [], isExpanded, onToggle }: { 
   label: string, 
   value: string, 
@@ -1847,8 +2167,8 @@ function TelemetryRow({ label, value, torque, temp, status = 'normal', posHistor
         className={`flex items-center justify-between text-[11px] p-2 w-full text-left transition-colors ${status === 'warning' ? 'bg-yellow-500/5' : ''}`}
       >
         <div className="flex items-center gap-2 w-32">
-          <span className={`transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
-            <ArrowRight className="w-3 h-3 text-neutral-600" />
+          <span className={`transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}>
+            <ChevronDown className="w-3.5 h-3.5 text-neutral-500" />
           </span>
           <span className="text-neutral-400 font-mono flex items-center gap-1.5 truncate">
             {status === 'warning' && <AlertTriangle className="w-3 h-3 text-yellow-500" />}
@@ -1875,8 +2195,16 @@ function TelemetryRow({ label, value, torque, temp, status = 'normal', posHistor
               <span>Position</span>
               <span className="text-emerald-400 font-mono">{value}</span>
             </div>
-            <div className="h-10 bg-neutral-900/50 rounded border border-neutral-800/50 flex items-center justify-center p-1">
-              <Sparkline data={posHistory} width={120} height={28} color="#10b981" />
+            <div className="h-12 bg-neutral-900/50 rounded border border-neutral-800/50 flex flex-col p-1">
+              <div className="flex-1 flex items-center justify-center">
+                <Sparkline data={posHistory} width={140} height={32} color="#10b981" />
+              </div>
+              {posHistory.length > 0 && (
+                <div className="flex justify-between text-[7px] font-mono text-neutral-600 px-1">
+                  <span>MIN: {(Math.min(...posHistory) * 180 / Math.PI).toFixed(1)}°</span>
+                  <span>MAX: {(Math.max(...posHistory) * 180 / Math.PI).toFixed(1)}°</span>
+                </div>
+              )}
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
@@ -1884,8 +2212,16 @@ function TelemetryRow({ label, value, torque, temp, status = 'normal', posHistor
               <span>Torque</span>
               <span className="text-blue-400 font-mono">{torque}</span>
             </div>
-            <div className="h-10 bg-neutral-900/50 rounded border border-neutral-800/50 flex items-center justify-center p-1">
-              <Sparkline data={torqueHistory} width={120} height={28} color="#3b82f6" />
+            <div className="h-12 bg-neutral-900/50 rounded border border-neutral-800/50 flex flex-col p-1">
+              <div className="flex-1 flex items-center justify-center">
+                <Sparkline data={torqueHistory} width={140} height={32} color="#3b82f6" />
+              </div>
+              {torqueHistory.length > 0 && (
+                <div className="flex justify-between text-[7px] font-mono text-neutral-600 px-1">
+                  <span>MIN: {Math.min(...torqueHistory).toFixed(1)} Nm</span>
+                  <span>MAX: {Math.max(...torqueHistory).toFixed(1)} Nm</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
