@@ -247,8 +247,10 @@ export default function App() {
         if (msg.pose && msg.pose.pose) {
           const pos = msg.pose.pose.position;
           const ori = msg.pose.pose.orientation;
-          // Simple yaw from quaternion
-          const yaw = 2 * Math.atan2(ori.z, ori.w);
+          // Robust yaw extraction from quaternion (works with non-zero roll/pitch)
+          const sinyCosp = 2 * (ori.w * ori.z + ori.x * ori.y);
+          const cosyCosp = 1 - 2 * (ori.y * ori.y + ori.z * ori.z);
+          const yaw = Math.atan2(sinyCosp, cosyCosp);
           setRobotPose({ x: pos.x, y: pos.y, yaw });
           
           setTrajectory(prev => {
