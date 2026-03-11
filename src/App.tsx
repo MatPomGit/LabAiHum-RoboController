@@ -27,6 +27,7 @@ export default function App() {
   const [rosConfirmAction, setRosConfirmAction] = useState<'connect' | 'disconnect' | null>(null);
   const [expandedJoints, setExpandedJoints] = useState<Record<string, boolean>>({});
   const rosCoreSubscriptionsRef = useRef<ROSLIB.Topic[]>([]);
+  const rosRef = useRef<ROSLIB.Ros | null>(null);
   
   const [customTopics, setCustomTopics] = useState<{name: string, type: string}[]>([]);
   const [customTopicData, setCustomTopicData] = useState<Record<string, any>>({});
@@ -128,6 +129,7 @@ export default function App() {
     const rosInstance = new ROSLIB.Ros({
       url: rosUrl
     });
+    rosRef.current = rosInstance;
 
     rosInstance.on('connection', () => {
       setRosStatus('connected');
@@ -268,6 +270,8 @@ export default function App() {
 
     rosInstance.on('close', () => {
       cleanupRosCoreSubscriptions();
+      rosRef.current = null;
+      setRos(null);
       setRosStatus('disconnected');
       setRosErrorMsg('Connection closed.');
       addLog('ROS2 Connection closed.');
@@ -446,9 +450,9 @@ export default function App() {
   useEffect(() => {
     return () => {
       cleanupRosCoreSubscriptions();
-      if (ros) ros.close();
+      rosRef.current?.close();
     };
-  }, [cleanupRosCoreSubscriptions, ros]);
+  }, [cleanupRosCoreSubscriptions]); // cleanupRosCoreSubscriptions is stable (useCallback with [])
 
   // Custom Topics Subscription Effect
   useEffect(() => {
@@ -1177,7 +1181,7 @@ export default function App() {
               <section className="space-y-4">
                 <h3 className="text-lg font-bold text-neutral-200 flex items-center gap-2">
                   <Target className="w-5 h-5 text-emerald-400" />
-                  Unitree Lidar (Unilidar)
+                  Unitree Lidar (UniLidar)
                 </h3>
                 <div className="bg-neutral-900/50 p-4 rounded-xl border border-neutral-800 space-y-3">
                   <p className="text-xs leading-relaxed text-neutral-400">
@@ -1218,11 +1222,11 @@ export default function App() {
                   <div className="space-y-2">
                     <div className="flex justify-between items-center text-[10px] font-mono">
                       <span className="text-neutral-500">RGB Topic:</span>
-                      <span className="text-blue-400">/camera/camera/color/image_raw</span>
+                      <span className="text-blue-400">/camera/camera/color/image_raw/compressed</span>
                     </div>
                     <div className="flex justify-between items-center text-[10px] font-mono">
                       <span className="text-neutral-500">Depth Topic:</span>
-                      <span className="text-blue-400">/camera/camera/depth/image_rect_raw</span>
+                      <span className="text-blue-400">/camera/camera/depth/image_rect_raw/compressed</span>
                     </div>
                     <div className="flex justify-between items-center text-[10px] font-mono">
                       <span className="text-neutral-500">Points:</span>
